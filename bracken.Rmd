@@ -1,0 +1,336 @@
+---
+title: "Rice straw degradation analysis"
+author: "Jeferyd Yepes"
+date: "June 19th, 2024"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: false
+    toc_depth: 3
+    number_sections: true
+    theme: lumen
+    highlight: tango
+---
+```{css, echo=FALSE}
+.title, .author, .date {
+  text-align: center;
+}
+```
+
+<style type="text/css">
+
+body, td {
+   font-size: 16px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+> 📝 **Objective**: Carry out a downstream analysis using the Kraken2/Bracken output to report important insights in terms of differences among the treatments.
+
+# About the dataset
+
+The dataset we will be using for this part of the workshop was generated at CIAT by our collaborators (Prof. Emiliano Barreto, Prof. Daniel Uribe and MSc. candidate Nicolás Novoa). In brief, we attempted to study different biological/chemical treatments to enhance the rice straw degradation, and we sequenced data before and start the experiments to compare the effect of such treatments.
+
+The metadata (sample data in the _phyloseq_ context) contains the following information about the experiments:
+
+
+```{r importingData, echo=TRUE}
+
+options(conflicts.policy = list(warn = FALSE)) #this line removes all warnings of function masking
+
+#change the PATH according to your setting
+setwd("/Users/yepesgar/Downloads/Workshop_UNAL_2024/downstream_analysis")
+
+library(knitr)
+tab_sam = read.csv("sample_table.csv")
+kable(tab_sam)
+```
+
+# Transforming the Bracken output
+
+Once we account with the Bracken reports, you can process them to explore important aspects such as diversity and abundance.
+
+## kraken-biom
+
+kraken-biom is a tool aimed to produce BIOM-format tables from either Kraken2 or Bracken outputs; it is able to handle multiple samples concatenating one single file. As an example, you could run the following command:
+
+> ⚠ **WARN**: Do not run this command, this has been already pre-computed for you.
+
+> Bash
+>
+> ```
+> kraken-biom SRR8359173.breport --fmt json -o SRR8359173.biom
+> ```
+
+# Experimental setting
+
+Now, with the *.biom* file, it is possible to import the data to R. We are going to use the *.biom* file along with the sample data to build the phyloseq object. Here it is how it would look like:
+
+```{r creatingPhyloseq, echo=TRUE}
+
+library("phyloseq")
+library("dplyr")
+test <- import_biom("samples.biom")
+
+#Process the data to generate the Phyloseq object along with the experiment information
+samples_df <- tab_sam %>% 
+  tibble::column_to_rownames("Name") 
+samples = sample_data(samples_df)
+otu_inf = test@otu_table
+phy_inf = test@tax_table
+all_data <- phyloseq(otu_inf,phy_inf,samples)
+
+#Rename the column names in the taxonomy table
+all_data@tax_table@.Data <- substring(all_data@tax_table@.Data, 4)
+colnames(all_data@tax_table@.Data)<- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+all_data
+```
+
+Before keep going, let's check the information contained in the three tables that composed the phyloseq object:
+
+**Taxonomy table:**
+
+```{r taxTable, echo=FALSE}
+taxa_table <- tax_table(all_data)
+taxa_table_df <- as.data.frame(taxa_table)
+kable(head(taxa_table_df))
+```
+
+**OTU table:**
+
+```{r OTUTable, echo=FALSE}
+otus_table <- otu_table(all_data)
+otus_table_df <- as.data.frame(otus_table)
+kable(head(otus_table_df[ ,1:10]))
+```
+
+**Sample data:**
+
+```{r samData, echo=FALSE}
+samples_data <- sample_data(all_data)
+samples_data_df <- as.data.frame(samples_data)
+samples_data_df <- cbind(SampleID = rownames(samples_data_df), samples_data_df)
+rownames(samples_data_df) <- NULL
+kable(head(samples_data_df))
+```
+
+# Subsetting the data
+
+Now that we are acquainted with our data, we are going to review the changes between Treatment 1 and 2. 
+
+This is the code to subset the data including only the replicates belonging to the above-mentioned treatments in both matrices:
+
+> ⚠ **WARN**: You can use a different taxonomic level, albeit the deeper you go, the more time and resources will be consumed to process the data.
+
+```{r subsetData, echo=TRUE}
+#Subset the data to have only phylum
+phylum_data = tax_glom(all_data, "Phylum")
+#Subset the data to have replicates belonging only to Control treatments:
+control_soil_samples <- subset_samples(phylum_data, Group %in% c("T1_rs_1", "T1_soil_1", "T2_rs_1", "T2_soil_1"))
+control_soil_samples
+```
+
+# Plots
+
+## α-diversity
+
+Next, Let's explore the α-diversity between the samples using two indexes Shannon and Inverse Simpson:
+
+```{r richnessPlot, echo=TRUE}
+
+suppressWarnings({ 
+library("ggplot2")
+library("RColorBrewer")
+control_soil_samples@sam_data$Time[control_soil_samples@sam_data$Time == 1] <- as.character("0") #This is only done for this plot, the presence of zeros in a sample variable generates problems
+control_soil_samples@sam_data$Time[control_soil_samples@sam_data$Time == 2] <- as.character("1")
+
+control_soil_samples@sam_data$Replicate[control_soil_samples@sam_data$Replicate == 1] <- as.character("1")
+
+control_soil_samples@sam_data$Replicate[control_soil_samples@sam_data$Replicate == 2] <- as.character("2")
+
+control_soil_samples@sam_data$Replicate[control_soil_samples@sam_data$Replicate == 3] <- as.character("3")
+
+control_soil_samples@sam_data$Replicate[control_soil_samples@sam_data$Replicate == 4] <- as.character("4")
+
+control_soil_samples@sam_data$Replicate[control_soil_samples@sam_data$Replicate == 5] <- as.character("5")
+
+plot_richness(control_soil_samples, measures=c("InvSimpson", "Shannon"), x="Group", shape = "Replicate",
+              color="Matrix") +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 14),
+        legend.text = element_text(size = 14), strip.text.x = element_text(size = 14),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        panel.background = element_blank(),
+        legend.title = element_text(size=16),
+        axis.text.x = element_text(angle = 45, hjust=0.5)) +
+  geom_point(size=5, alpha=0.5)
+}) 
+```
+
+## Ordination plots (PCoA and NMDS)
+
+This dimensionality-reduction techniques are useful to review the β-diversity, in other words a measure of how alike or different the samples are. To this purpose, we are going to use a Bray-Curtis dissimilarity matrix as a metric of the overall difference among samples:
+
+
+```{r PCoA, echo=TRUE, message=FALSE}
+#PCA with only phylum data, it can be done also with all data
+carbom.ord <- ordinate(control_soil_samples, "PCoA", "bray")
+plot_ordination(control_soil_samples, carbom.ord, type="samples", color="Group",
+                title="Principal Coordinate Analysis") +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 14),
+        legend.text = element_text(size = 14), strip.text.x = element_text(size = 14),
+        plot.title = element_text(size = 16),
+        legend.title = element_text(size=16),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        panel.background = element_blank())+
+  geom_point(size=10, alpha=0.7) +
+  stat_ellipse(type = "t", linetype = 2)
+```
+
+```{r NMDS, echo=TRUE, message=FALSE, results='hide'}
+#PCA with only phylum data, it can be done also with all data
+carbom.ord <- ordinate(control_soil_samples, "NMDS", "bray")
+plot_ordination(control_soil_samples, carbom.ord, type="samples", color="Group",
+                title="Non-metric MultiDimensional Scale") +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 14),
+        legend.text = element_text(size = 14), strip.text.x = element_text(size = 14),
+        plot.title = element_text(size = 16),
+        legend.title = element_text(size=16),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        panel.background = element_blank())+
+  geom_point(size=10, alpha=0.7) +
+  stat_ellipse(type = "t", linetype = 2)
+```
+
+If you want to change the input matrix to carry out a different analysis, you can use the command:
+
+```{r distances, echo=TRUE}
+distanceMethodList
+```
+
+## Barplots
+
+Through these plots it possible to establish differences among the treatments in terms of both relative and absolute abundance, describing the effect of the treatment on the community composition:
+
+* **Absolute abundance**
+
+```{r absoluteBarPlot, echo=TRUE}
+df_ss <- psmelt(control_soil_samples)
+df_ss$Phylum <- as.character(df_ss$Phylum)
+df_ss$Phylum[df_ss$Abundance < 10000] <- "Phylum < 1000 counts." #Move this threshold according to your data and the taxonomical level you are analyzing.
+df_ss$Phylum <- as.factor(df_ss$Phylum)
+phylum_colors_rel<- colorRampPalette(brewer.pal(12,"Paired")) (length(levels(df_ss$Phylum)))
+absolute_plot <- ggplot(data=df_ss, aes(x=Replicate, y=Abundance, fill=Phylum))+ 
+  geom_bar(aes(), stat="identity", position="stack")+
+  scale_fill_manual(values = phylum_colors_rel)+
+  theme(text = element_text(size = 14),
+        panel.background = element_blank(),
+        plot.title = element_text(size=14,hjust=0.5))+
+  ggtitle("Sample")+
+  labs(y = "Absolute abundance")+
+  facet_grid(~ Group)
+absolute_plot
+```
+
+* **Relative abundance**
+
+```{r relativeBarPlot, echo=TRUE}
+percentages_ss <- transform_sample_counts(control_soil_samples, function(x) x*100 / sum(x) )
+df_per_ss <- psmelt(percentages_ss)
+df_per_ss$Phylum <- as.character(df_per_ss$Phylum)
+df_per_ss$Phylum[df_per_ss$Abundance < 1] <- "Phylum < 1% abund." #Move this threshold according to your data and the taxonomical level you are analyzing.
+df_per_ss$Phylum <- as.factor(df_per_ss$Phylum)
+phylum_colors_rel<- colorRampPalette(brewer.pal(12,"Paired")) (length(levels(df_per_ss$Phylum)))
+relative_plot <- ggplot(data=df_per_ss, aes(x=Replicate, y=Abundance, fill=Phylum))+ 
+  geom_bar(aes(), stat="identity", position="stack")+
+  scale_fill_manual(values = phylum_colors_rel)+
+  theme(text = element_text(size = 14),
+        panel.background = element_blank(),
+        plot.title = element_text(size=14,hjust=0.5))+
+  ggtitle("Sample")+
+  labs(y = "Relative abundance")+
+  facet_grid(~ Group)
+relative_plot
+```
+
+# LEfSE analysis
+
+We are going to statistically validate the difference between two specific samples using Linear Discriminant Analysis to establish the effect sizes. First, we are going to select only Treatment 1 and 2 in the rice straw matrix at time 1, and therefore we are interested in the differences among these two treatments in such matrix at **genus level**:
+
+```{r ControlSamples, echo=TRUE}
+#Subset the data to have replicates belonging only to Control treatment in a soil matrix at time 0 and time 1:
+two_sample_data <- subset_samples(all_data, Group == "T1_rs_1" | Group == "T2_rs_1")
+two_sample_data
+```
+
+Next, with this subset, we will proceed to carry out the analysis along with its correspondent plot to ease the visualization:
+
+```{r LEfSE, echo=TRUE, message=FALSE}
+library("lefser")
+library("tidyr")
+
+#Convert the phyloseq object into a dataframe
+counts <- psmelt(two_sample_data)
+counts$Genus <- as.character(counts$Genus)
+
+#Select only the Genus data from the dataframe along with the Abundance and the sample they belong to
+counts_genus <- counts %>% select(Genus, Sample, Abundance)
+
+#Collapsing the counts of each genus per sample
+counts_genus <- counts_genus %>%
+  group_by(Genus, Sample) %>%
+  mutate(sum_col = sum(Abundance)) %>%
+  ungroup() %>%
+  distinct(Genus, Sample, .keep_all = TRUE)
+counts_genus <- as.data.frame(counts_genus)
+counts_genus$Abundance <- NULL
+#counts[counts$Genus == '', ] #Line to check the presence of empty taxa
+
+#Transform the dataframe to have the genus names as row names
+count_genus_wide <- spread(counts_genus, Sample, sum_col)
+count_genus_wide <- count_genus_wide[-1,] #If the dataframe contains empty taxa
+rownames(count_genus_wide) <- count_genus_wide$Genus
+count_genus_wide$Genus <- NULL
+
+#Create the Summarized Experiment
+colData <- as(sample_data(two_sample_data), "data.frame")
+se <- SummarizedExperiment(assays = list(counts = count_genus_wide), colData = colData)
+res <- lefser(se, groupCol = "Group")
+lefserPlot(res)
+```
+
+# Discussion
+
+Now, please make seven groups with either three or four people in order to perform your analysis according to the following table:
+
+```{r groups, echo=FALSE}
+groups = read.csv("groups.csv")
+kable(groups)
+```
+
+Discuss about your results taking into account the following aspects:
+
+> ❓ **Question 1**: Do you  observe any difference between treatments in terms  of α-diversity? The measurements provided by the indexes are correspondant?
+
+> ❓ **Question 2**: Can you indentify a sample or cluster of samples that is/are different from the other(s)? Does your PCA explain well the variability of your data?
+
+> 📊 **Exercise 3**: Change the input matrix for PCoA and NMDS and compare with the previous results generated using Bray-Curtis.
+
+> ❓ **Question 3**: At a glance, can you identify any taxa  that seems to be over-represented among your samples? Do the organisms belonging to the least abundant taxa compose a big portion of the community?
+
+> ❓ **Question 4**: Are there differences between the absolute and relative abundance plots? How these differences can impact your analysis?
+
+> ❓ **Question 5**: The diferentially abundant taxa depicted by the LEfSE analysis belong to the same taxa you have identified as possible over-represented organisms at a glance?
+
